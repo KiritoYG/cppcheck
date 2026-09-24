@@ -719,7 +719,7 @@ private:
         const auto messages = configurationMessages(invalidConfigurationCode(), settings);
         ASSERT_EQUALS(1, messages.size());
         ASSERT_EQUALS("invalidConfiguration", messages.front().id);
-        const std::string message = messages.front().shortMessage();
+        const std::string& message = messages.front().shortMessage();
         ASSERT(message.find("EXTRA=7;FEATURE") != std::string::npos);
         ASSERT(message.find("EXTRA=7", message.find("EXTRA=7") + 1) == std::string::npos);
     }
