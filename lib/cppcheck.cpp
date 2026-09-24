@@ -1761,7 +1761,7 @@ void CppCheck::purgedConfigurationMessage(const std::string &file, const std::st
 }
 
 void CppCheck::invalidConfigurationMessage(const std::string& file0, const std::string& file,
-                                          const std::string& configuration, const simplecpp::Output& output)
+                                           const std::string& configuration, const simplecpp::Output& output)
 {
     std::list<ErrorMessage::FileLocation> locations;
     if (!file.empty()) {
@@ -1783,8 +1783,8 @@ void CppCheck::invalidConfigurationMessage(const std::string& file0, const std::
     }
 
     mErrorLogger.reportErr(ErrorMessage(std::move(locations), file0, Severity::information,
-                                       "The configuration '" + effectiveConfig + "' was not checked because of a preprocessor error: " + output.msg,
-                                       "invalidConfiguration", Certainty::normal));
+                                        "The configuration '" + effectiveConfig + "' was not checked because of a preprocessor error: " + output.msg,
+                                        "invalidConfiguration", Certainty::normal));
 }
 
 //---------------------------------------------------------------------------
