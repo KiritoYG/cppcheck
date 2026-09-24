@@ -1,0 +1,118 @@
+name: Verify C redeclaration repair with GCC
+
+on:
+  push:
+    branches:
+      - codex/verify-c-redeclarations
+
+permissions:
+  contents: read
+
+jobs:
+  gcc:
+    if: github.repository == 'KiritoYG/cppcheck'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERIFIED_SOURCE: f775f03c9eecf26a09d00076bb5e39a701e24c4d
+      CXX: g++
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify exact PR source and record environment
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          git merge-base --is-ancestor "$VERIFIED_SOURCE" HEAD
+          git diff --exit-code "$VERIFIED_SOURCE" HEAD -- . ':(exclude).github/workflows/codex-c-redeclarations-verify.yml'
+          {
+            echo "verified_source=$VERIFIED_SOURCE"
+            echo "workflow_head=$(git rev-parse HEAD)"
+            echo "only_diff_from_source:"
+            git diff --name-status "$VERIFIED_SOURCE" HEAD
+            g++ --version
+            cmake --version
+            uname -a
+          } | tee evidence/source-and-environment.log
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install bounded build and test dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build libpcre3-dev
+          python -m pip install pytest pytest-timeout pytest-xdist psutil
+          python --version | tee -a evidence/source-and-environment.log
+
+      - name: Configure GCC warnings as errors without GUI or PCH
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-ci -G Ninja -Werror=dev --warn-uninitialized \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG='-O0 -g0' \
+            -DCMAKE_CXX_FLAGS='-Werror=range-loop-construct' \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
+            -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
+            -DBUILD_TESTING=ON -DBUILD_GUI=OFF -DBUILD_TRIAGE=OFF \
+            -DUSE_MATCHCOMPILER=OFF -DUSE_BOOST=OFF -DHAVE_RULES=ON \
+            2>&1 | tee evidence/configure.log
+          python - <<'PY'
+          import json
+          commands = json.load(open('build-ci/compile_commands.json'))
+          relevant = [c for c in commands if c['file'].endswith('/lib/symboldatabase.cpp')]
+          assert relevant
+          assert all('-Werror' in c['command'] and '-Werror=range-loop-construct' in c['command'] for c in relevant)
+          print(json.dumps(relevant, indent=2))
+          PY
+
+      - name: Build CLI and native tests
+        id: build
+        run: |
+          set -euo pipefail
+          cmake --build build-ci --parallel 2 2>&1 | tee evidence/build.log
+          cp build-ci/bin/cppcheck ./cppcheck
+
+      - name: Full native unit suite
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          ./build-ci/bin/testrunner -q 2>&1 | tee evidence/native-tests.log
+
+      - name: Addon pytest and dump parser tests
+        if: always() && steps.build.outcome == 'success'
+        env:
+          PYTHONPATH: ./addons
+        run: |
+          set -euo pipefail
+          python -m pytest -Werror --strict-markers -v addons/test 2>&1 | tee evidence/addon-tests.log
+          python -m pytest -Werror --strict-markers -v --cppcheck-binary="$PWD/cppcheck" test/addon 2>&1 | tee evidence/parser-tests.log
+
+      - name: Original MISRA CTU and C89 C11 verification
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          ./cppcheck --addon=misra --enable=style --inline-suppr --enable=information --error-exitcode=1 addons/test/misra/misra-ctu-*-test.c 2>&1 | tee evidence/misra-ctu.log
+          pushd addons/test
+          ../../cppcheck --dump -DDUMMY --suppress=uninitvar --inline-suppr misra/misra-test.c --std=c89 --platform=unix64 2>&1 | tee ../../evidence/misra-c89-dump.log
+          python ../misra.py -verify misra/misra-test.c.dump 2>&1 | tee ../../evidence/misra-c89-verify.log
+          ../../cppcheck --dump -DDUMMY --suppress=uninitvar --inline-suppr misra/misra-test-c11.c --std=c11 --platform=unix64 2>&1 | tee ../../evidence/misra-c11-dump.log
+          python ../misra.py -verify misra/misra-test-c11.c.dump 2>&1 | tee ../../evidence/misra-c11-verify.log
+          popd
+
+      - name: Preserve bounded verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gcc-c-redeclarations-evidence
+          path: |
+            evidence/
+            build-ci/compile_commands.json
+          retention-days: 14
