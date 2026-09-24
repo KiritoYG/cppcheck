@@ -2740,13 +2740,31 @@ private:
                         "extern int data[];\n"
                         "int after(void) { return data[0]; }\n"
                         "static int internal;\n"
-                        "extern int internal = 1;\n");
+                        "extern int internal = 1;\n"
+                        "extern int chained;\n"
+                        "int chained;\n"
+                        "int chained = 3;\n"
+                        "extern int chained;\n");
         ASSERT(db);
-        ASSERT_EQUALS(4, db->scopeList.front().varlist.size());
+        ASSERT_EQUALS(5, db->scopeList.front().varlist.size());
 
         const Variable* value = Token::findsimplematch(tokenizer.tokens(), "value")->variable();
         ASSERT(value && value->isInit() && !value->isExtern());
         ASSERT_EQUALS(2, value->nameToken()->linenr());
+        ASSERT_EQUALS(3U, value->declarations().size());
+        for (std::size_t i = 0; i < value->declarations().size(); ++i) {
+            const Variable::Declaration& declaration = value->declarations()[i];
+            ASSERT_EQUALS(i + 1, declaration.nameToken->linenr());
+            ASSERT_EQUALS(i != 1, declaration.isExtern);
+            ASSERT_EQUALS(i == 1, declaration.isInit);
+            ASSERT(!declaration.isStatic);
+            ASSERT_EQUALS("int", declaration.typeStartToken->str());
+            ASSERT_EQUALS("int", declaration.typeEndToken->str());
+            ASSERT(declaration.nameToken->variable() == value);
+        }
+        const Variable copy(*value);
+        ASSERT_EQUALS(value->declarations().size(), copy.declarations().size());
+        ASSERT(copy.declarations().front().nameToken == value->declarations().front().nameToken);
         const Variable* reverse = Token::findsimplematch(tokenizer.tokens(), "reverse")->variable();
         ASSERT(reverse && reverse->isInit() && !reverse->isExtern());
         ASSERT_EQUALS(4, reverse->nameToken()->linenr());
@@ -2759,6 +2777,25 @@ private:
         const Variable* internal = Token::findsimplematch(tokenizer.tokens(), "internal")->variable();
         ASSERT(internal && internal->isStatic() && internal->isInit());
         ASSERT_EQUALS(12, internal->nameToken()->linenr());
+        ASSERT_EQUALS(2U, internal->declarations().size());
+        ASSERT(internal->declarations()[0].isStatic);
+        ASSERT(!internal->declarations()[0].isExtern);
+        ASSERT(!internal->declarations()[0].isInit);
+        ASSERT(!internal->declarations()[1].isStatic);
+        ASSERT(internal->declarations()[1].isExtern);
+        ASSERT(internal->declarations()[1].isInit);
+
+        const Variable* chained = Token::findsimplematch(tokenizer.tokens(), "chained")->variable();
+        ASSERT(chained && chained->isInit() && !chained->isExtern());
+        ASSERT_EQUALS(15, chained->nameToken()->linenr());
+        ASSERT_EQUALS(4U, chained->declarations().size());
+        for (std::size_t i = 0; i < chained->declarations().size(); ++i) {
+            const Variable::Declaration& declaration = chained->declarations()[i];
+            ASSERT_EQUALS(13 + i, declaration.nameToken->linenr());
+            ASSERT_EQUALS(i == 0 || i == 3, declaration.isExtern);
+            ASSERT_EQUALS(i == 2, declaration.isInit);
+            ASSERT(declaration.nameToken->variable() == chained);
+        }
 
         for (const Variable& var : db->scopeList.front().varlist) {
             ASSERT(db->getVariableFromVarId(var.declarationId()) == &var);

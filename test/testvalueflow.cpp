@@ -6029,7 +6029,7 @@ private:
     }
 
     void valueFlowGlobalStaticRedeclarationC() {
-        for (const std::string& change : {"", "x = 2;", "++x;", "int *p = &x; *p = 2;"}) {
+        for (const std::string change : {"", "x = 2;", "++x;", "int *p = &x; *p = 2;"}) {
             const std::string code = "static int x;\n"
                                      "void update(void) { " + change + " }\n"
                                      "int f(void) { update(); return x - 1; }\n"

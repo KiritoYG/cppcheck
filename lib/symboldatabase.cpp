@@ -912,6 +912,12 @@ void SymbolDatabase::createSymbolDatabaseVariableInfo()
                 }
 
                 Variable& var = *previous->second;
+                auto declarations = std::move(var.mDeclarations);
+                if (declarations.empty())
+                    declarations.push_back({var.nameToken(), var.typeStartToken(), var.typeEndToken(),
+                                            var.isExtern(), var.isStatic(), var.isInit()});
+                declarations.push_back({it->nameToken(), it->typeStartToken(), it->typeEndToken(),
+                                        it->isExtern(), it->isStatic(), it->isInit()});
                 const bool isStatic = var.isStatic() || it->isStatic();
                 const bool isExtern = var.isExtern() && it->isExtern();
                 const bool maybeUnused = var.isMaybeUnused() || it->isMaybeUnused();
@@ -937,6 +943,7 @@ void SymbolDatabase::createSymbolDatabaseVariableInfo()
                 var.setFlag(Variable::fIsMaybeUnused, maybeUnused);
                 if (dimensions.size() == var.dimensions().size())
                     var.setDimensions(dimensions);
+                var.mDeclarations = std::move(declarations);
                 it = scope.varlist.erase(it);
             }
         }
@@ -2550,6 +2557,7 @@ Variable& Variable::operator=(const Variable &var) &
     mType = var.mType;
     mScope = var.mScope;
     mDimensions = var.mDimensions;
+    mDeclarations = var.mDeclarations;
     delete mValueType;
     mValueType = vt;
 
@@ -4726,7 +4734,27 @@ void SymbolDatabase::printXml(std::ostream &out) const
         outs += " isVolatile=\"";
         outs += bool_to_string(var->isVolatile());
         outs += '\"';
-        outs += "/>\n";
+        if (var->declarations().empty()) {
+            outs += "/>\n";
+        } else {
+            outs += ">\n";
+            for (const Variable::Declaration& declaration : var->declarations()) {
+                outs += "      <declaration nameToken=\"";
+                outs += id_string(declaration.nameToken);
+                outs += "\" typeStartToken=\"";
+                outs += id_string(declaration.typeStartToken);
+                outs += "\" typeEndToken=\"";
+                outs += id_string(declaration.typeEndToken);
+                outs += "\" isExtern=\"";
+                outs += bool_to_string(declaration.isExtern);
+                outs += "\" isStatic=\"";
+                outs += bool_to_string(declaration.isStatic);
+                outs += "\" isInit=\"";
+                outs += bool_to_string(declaration.isInit);
+                outs += "\"/>\n";
+            }
+            outs += "    </var>\n";
+        }
     }
     outs += "  </variables>\n";
 
