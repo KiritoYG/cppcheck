@@ -1,0 +1,99 @@
+name: Verify SDCC assembly preprocessing with GCC
+
+on:
+  push:
+    branches:
+      - codex/verify-sdcc-asm
+
+permissions:
+  contents: read
+
+jobs:
+  gcc:
+    if: github.repository == 'KiritoYG/cppcheck'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERIFIED_SOURCE: b66fae3a3481626ced692bad0440f7b18fc750ae
+      CXX: g++
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify exact source and environment
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          git merge-base --is-ancestor "$VERIFIED_SOURCE" HEAD
+          git diff --exit-code "$VERIFIED_SOURCE" HEAD -- . ':(exclude).github/workflows/codex-sdcc-asm-verify.yml'
+          {
+            git rev-parse HEAD
+            git diff --name-status "$VERIFIED_SOURCE" HEAD
+            g++ --version
+            cmake --version
+            uname -a
+          } | tee evidence/source-and-environment.log
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install build and test dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build libpcre3-dev
+          python -m pip install pytest pytest-timeout pytest-xdist psutil
+
+      - name: Configure warnings as errors
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-ci -G Ninja -Werror=dev --warn-uninitialized \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG='-O0 -g0' \
+            -DCMAKE_CXX_FLAGS='-Werror=range-loop-construct' \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
+            -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
+            -DBUILD_TESTING=ON -DBUILD_GUI=OFF -DBUILD_TRIAGE=OFF \
+            -DUSE_MATCHCOMPILER=OFF -DUSE_BOOST=OFF -DHAVE_RULES=ON \
+            2>&1 | tee evidence/configure.log
+          python - <<'PY'
+          import json, shlex
+          commands = json.load(open('build-ci/compile_commands.json'))
+          core = [c for c in commands if c['file'].endswith('/lib/preprocessor.cpp')]
+          assert core and all('-Werror' in shlex.split(c['command']) for c in core)
+          PY
+
+      - name: Build CLI and native suite
+        id: build
+        run: |
+          set -euo pipefail
+          cmake --build build-ci --parallel 2 2>&1 | tee evidence/build.log
+
+      - name: Full native tests
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          ./build-ci/bin/testrunner -q 2>&1 | tee evidence/native-tests.log
+
+      - name: Main-file and included-header CLI regressions
+        if: always() && steps.build.outcome == 'success'
+        env:
+          TEST_CPPCHECK_EXE_LOOKUP_PATH: ./build-ci/bin
+        run: |
+          set -euo pipefail
+          python -m pytest -Werror --strict-markers -v test/cli/other_test.py -k sdcc_asm_operands 2>&1 | tee evidence/cli-tests.log
+
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gcc-sdcc-asm-evidence
+          path: |
+            evidence/
+            build-ci/compile_commands.json
+          retention-days: 14
